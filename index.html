@@ -1,25 +1,35 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Todo List</title>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TodoList 실습</title>
 
-    <!-- style.css 연결 -->
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <!-- 화면에 보일 제목 -->
-    <h1>Todo List</h1>
+  <!-- CSS 파일 연결 -->
+  <link rel="stylesheet" href="style.css">
 
-    <!-- 할 일 입력창 + 추가 버튼 -->
-    <input id="todoInput" type="text" placeholder="할 일을 입력하세요" />
-    <button id="addBtn">추가</button>
+  <!-- JavaScript 파일 연결 -->
+  <!-- defer는 HTML을 먼저 읽은 뒤 JavaScript를 실행하게 한다. -->
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="container">
+    <h1>TodoList</h1>
+    <p class="description">오늘 해야 할 일을 입력하고 관리해 봅니다.</p>
 
-    <!-- 할 일 목록이 쌓일 영역 -->
-    <ul id="todoList"></ul>
+    <!-- 할 일 입력 폼 -->
+    <form id="todoForm" class="todo-form">
+      <input
+        type="text"
+        id="todoInput"
+        placeholder="할 일을 입력하세요"
+        autocomplete="off"
+      >
+      <button type="submit">추가</button>
+    </form>
 
-    <!-- app.js 연결: defer를 붙이면 HTML 파싱이 끝난 뒤 실행되어 DOM을 안전하게 다룰 수 있어요 -->
-    <script src="app.js" defer></script>
-  </body>
+    <!-- 할 일 목록이 출력될 영역 -->
+    <ul id="todoList" class="todo-list"></ul>
+  </main>
+</body>
 </html>
