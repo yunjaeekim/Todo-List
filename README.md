@@ -1,8 +1,6 @@
 ## Todo-List
 - 할 일 목록 저장 및 처리하는 간단한 HTML
 
-Index.html 파일을 열면 실행됩니다.
-
 -------
 ### Index.HTML
 - 할 일 입력창
@@ -20,3 +18,6 @@ Index.html 파일을 열면 실행됩니다.
 ### App.JS
 - 텍스트 입력 처리
 - 버튼 클릭 처리
+
+
+Index.html 파일을 열면 실행됩니다.
