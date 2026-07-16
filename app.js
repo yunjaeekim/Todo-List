@@ -1,23 +1,53 @@
 "use strict";
 
 // ============================================================
-// 1. 상수
+// 1. 애플리케이션 계약과 상수
 // ============================================================
 
-const STORAGE_KEY = "todoListApp";
+/**
+ * @typedef {Object} Todo
+ * @property {string} id
+ * @property {string} title
+ * @property {boolean} completed
+ * @property {string} createdAt
+ * @property {string} updatedAt
+ * @property {string|null} completedAt
+ */
+
+/**
+ * @typedef {Object} PersistentState
+ * @property {number} schemaVersion
+ * @property {Todo[]} todos
+ */
+
+/**
+ * @typedef {Object} PendingDelete
+ * @property {Todo} todo
+ * @property {number} originalIndex
+ * @property {number} expiresAt
+ */
+
+const STORAGE_KEY = "todo-list-app:state";
+const LEGACY_STORAGE_KEYS = ["todoListApp"];
 const SCHEMA_VERSION = 1;
 const MAX_TITLE_LENGTH = 100;
 const UNDO_TIMEOUT_MS = 5000;
 const VALID_FILTERS = new Set(["all", "active", "completed"]);
+const EMPTY_STATE_MESSAGES = {
+  all: "아직 등록된 할 일이 없습니다.",
+  active: "남아 있는 할 일이 없습니다.",
+  completed: "완료한 할 일이 없습니다.",
+};
 
 // ============================================================
-// 2. DOM 요소
+// 2. DOM 참조
 // ============================================================
 
 const todoForm = document.querySelector("#todoForm");
 const todoInput = document.querySelector("#todoInput");
 const todoList = document.querySelector("#todoList");
 const remainingCount = document.querySelector("#remainingCount");
+const filterGroup = document.querySelector("#todoFilters");
 const filterButtons = document.querySelectorAll("[data-filter]");
 const statusMessage = document.querySelector("#statusMessage");
 const undoToast = document.querySelector("#undoToast");
@@ -25,7 +55,7 @@ const undoMessage = document.querySelector("#undoMessage");
 const undoButton = document.querySelector("#undoButton");
 
 // ============================================================
-// 3. 앱 상태
+// 3. 런타임 상태
 // ============================================================
 
 const state = {
@@ -33,15 +63,17 @@ const state = {
   ui: {
     filter: "all",
     editingTodoId: null,
+    /** @type {PendingDelete|null} */
     pendingDelete: null,
     undoTimerId: null,
   },
 };
 
 // ============================================================
-// 4. 저장소와 데이터 검증
+// 4. 저장소, 스키마 마이그레이션, 데이터 검증
 // ============================================================
 
+/** @returns {PersistentState} */
 function createDefaultDataState() {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -49,49 +81,95 @@ function createDefaultDataState() {
   };
 }
 
-function isValidDateString(value) {
-  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isValidTodo(todo) {
-  if (!todo || typeof todo !== "object") {
+function isCanonicalIsoDate(value) {
+  if (typeof value !== "string") {
     return false;
   }
 
-  const hasValidTitle =
-    typeof todo.title === "string" &&
-    todo.title.trim().length >= 1 &&
-    todo.title.trim().length <= MAX_TITLE_LENGTH;
-
-  const hasValidCompletionDate = todo.completed
-    ? isValidDateString(todo.completedAt)
-    : todo.completedAt === null;
-
-  return (
-    typeof todo.id === "string" &&
-    todo.id.length > 0 &&
-    hasValidTitle &&
-    typeof todo.completed === "boolean" &&
-    isValidDateString(todo.createdAt) &&
-    isValidDateString(todo.updatedAt) &&
-    hasValidCompletionDate
-  );
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.toISOString() === value;
 }
 
-function sanitizePersistentState(value) {
+function normalizeTitle(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isValidTitle(value) {
+  const title = normalizeTitle(value);
+  return title.length >= 1 && title.length <= MAX_TITLE_LENGTH;
+}
+
+/**
+ * 저장 데이터는 사용자가 개발자 도구에서 변경할 수 있으므로 신뢰하지 않는다.
+ * 시간 필드의 순서까지 검사해 이후 정렬·통계 기능이 잘못된 데이터를 받지 않게 한다.
+ */
+function isValidTodo(todo) {
+  if (!isRecord(todo) || !isValidTitle(todo.title)) {
+    return false;
+  }
+
   if (
-    !value ||
-    typeof value !== "object" ||
-    value.schemaVersion !== SCHEMA_VERSION ||
-    !Array.isArray(value.todos)
+    typeof todo.id !== "string" ||
+    todo.id.trim().length === 0 ||
+    typeof todo.completed !== "boolean" ||
+    !isCanonicalIsoDate(todo.createdAt) ||
+    !isCanonicalIsoDate(todo.updatedAt)
   ) {
-    return createDefaultDataState();
+    return false;
+  }
+
+  const createdTime = Date.parse(todo.createdAt);
+  const updatedTime = Date.parse(todo.updatedAt);
+
+  if (updatedTime < createdTime) {
+    return false;
+  }
+
+  if (!todo.completed) {
+    return todo.completedAt === null;
+  }
+
+  if (!isCanonicalIsoDate(todo.completedAt)) {
+    return false;
+  }
+
+  const completedTime = Date.parse(todo.completedAt);
+  return completedTime >= createdTime && completedTime <= updatedTime;
+}
+
+/**
+ * 새 스키마가 추가되면 버전별 변환을 이 함수에 연결한다.
+ * 현재 V1 데이터는 그대로 정제 단계로 전달한다.
+ */
+function migratePersistentState(value) {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  switch (value.schemaVersion) {
+    case 1:
+      return value;
+    default:
+      return null;
+  }
+}
+
+/** @returns {PersistentState|null} */
+function sanitizePersistentState(value) {
+  const migratedState = migratePersistentState(value);
+
+  if (!migratedState || !Array.isArray(migratedState.todos)) {
+    return null;
   }
 
   const usedIds = new Set();
   const todos = [];
 
-  for (const todo of value.todos) {
+  for (const todo of migratedState.todos) {
     if (!isValidTodo(todo) || usedIds.has(todo.id)) {
       continue;
     }
@@ -99,7 +177,7 @@ function sanitizePersistentState(value) {
     usedIds.add(todo.id);
     todos.push({
       id: todo.id,
-      title: todo.title.trim(),
+      title: normalizeTitle(todo.title),
       completed: todo.completed,
       createdAt: todo.createdAt,
       updatedAt: todo.updatedAt,
@@ -113,64 +191,101 @@ function sanitizePersistentState(value) {
   };
 }
 
-function loadPersistentState() {
-  try {
-    const rawData = localStorage.getItem(STORAGE_KEY);
-
-    if (!rawData) {
-      return createDefaultDataState();
-    }
-
-    return sanitizePersistentState(JSON.parse(rawData));
-  } catch (error) {
-    console.error("저장된 Todo 데이터를 불러오지 못했습니다.", error);
-    return createDefaultDataState();
+function migrateStorageKey(data, sourceKey) {
+  if (sourceKey === STORAGE_KEY) {
+    return;
   }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.removeItem(sourceKey);
+  } catch (error) {
+    // 이전 키를 지우기 전에 새 키 저장이 성공해야 데이터 유실이 없다.
+    console.warn("기존 Todo 저장 키를 이전하지 못했습니다.", error);
+  }
+}
+
+/** @returns {PersistentState} */
+function loadPersistentState() {
+  const storageKeys = [STORAGE_KEY, ...LEGACY_STORAGE_KEYS];
+
+  for (const storageKey of storageKeys) {
+    try {
+      const rawData = localStorage.getItem(storageKey);
+
+      if (rawData === null) {
+        continue;
+      }
+
+      const sanitizedState = sanitizePersistentState(JSON.parse(rawData));
+
+      if (!sanitizedState) {
+        continue;
+      }
+
+      migrateStorageKey(sanitizedState, storageKey);
+      return sanitizedState;
+    } catch (error) {
+      // 한 키가 손상되어도 다른 레거시 키에서 복구할 수 있도록 탐색을 계속한다.
+      console.warn(`Todo 저장 데이터(${storageKey})를 읽지 못했습니다.`, error);
+    }
+  }
+
+  return createDefaultDataState();
 }
 
 function savePersistentState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+
+    for (const legacyKey of LEGACY_STORAGE_KEYS) {
+      localStorage.removeItem(legacyKey);
+    }
+
     return true;
   } catch (error) {
     console.error("Todo 데이터를 저장하지 못했습니다.", error);
-    announce("브라우저 저장 공간에 데이터를 저장하지 못했습니다.");
     return false;
   }
 }
 
-function commitDataChange(message = "") {
-  savePersistentState();
+/**
+ * 데이터 변경 후 저장과 렌더링을 한 경로로 모아 화면과 저장소의 불일치를 줄인다.
+ * 저장 실패 시 변경 내용은 현재 탭에서 유지하되, 새로고침 시 사라질 수 있음을 알린다.
+ */
+function commitDataChange(successMessage = "") {
+  const isSaved = savePersistentState();
   render();
 
-  if (message) {
-    announce(message);
+  if (!isSaved) {
+    announce("변경 내용은 현재 화면에만 반영되었습니다. 브라우저 저장 공간을 확인하세요.");
+    return false;
   }
+
+  if (successMessage) {
+    announce(successMessage);
+  }
+
+  return true;
 }
 
 // ============================================================
 // 5. Todo 데이터 변경 함수
 // ============================================================
 
-function normalizeTitle(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
 function createTodoId() {
   if (globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
   }
 
+  // 구형 브라우저용 폴백이며, 서버 동기화 도입 시 서버 발급 ID로 대체한다.
   return `todo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function createTodo(title) {
   const normalizedTitle = normalizeTitle(title);
 
-  if (
-    normalizedTitle.length === 0 ||
-    normalizedTitle.length > MAX_TITLE_LENGTH
-  ) {
+  if (!isValidTitle(normalizedTitle)) {
     return null;
   }
 
@@ -197,12 +312,15 @@ function updateTodoTitle(todoId, nextTitle) {
   const todo = findTodoById(todoId);
   const normalizedTitle = normalizeTitle(nextTitle);
 
-  if (
-    !todo ||
-    normalizedTitle.length === 0 ||
-    normalizedTitle.length > MAX_TITLE_LENGTH
-  ) {
+  if (!todo || !isValidTitle(normalizedTitle)) {
     return false;
+  }
+
+  if (todo.title === normalizedTitle) {
+    state.ui.editingTodoId = null;
+    render();
+    announce("변경된 내용이 없습니다.");
+    return true;
   }
 
   todo.title = normalizedTitle;
@@ -239,6 +357,7 @@ function deleteTodo(todoId) {
 
   const [deletedTodo] = state.data.todos.splice(originalIndex, 1);
 
+  // 실행 취소는 가장 최근 삭제 한 건만 지원한다. V2 휴지통 도입 시 영구 데이터로 분리한다.
   clearUndoTimer();
   state.ui.pendingDelete = {
     todo: deletedTodo,
@@ -253,10 +372,7 @@ function deleteTodo(todoId) {
   commitDataChange("할 일을 삭제했습니다.");
   showUndoToast(deletedTodo.title);
 
-  state.ui.undoTimerId = window.setTimeout(() => {
-    clearPendingDelete();
-  }, UNDO_TIMEOUT_MS);
-
+  state.ui.undoTimerId = window.setTimeout(clearPendingDelete, UNDO_TIMEOUT_MS);
   return state.ui.pendingDelete;
 }
 
@@ -268,22 +384,21 @@ function restoreDeletedTodo() {
     return false;
   }
 
-  const insertIndex = Math.min(
-    pendingDelete.originalIndex,
-    state.data.todos.length,
-  );
-
+  const insertIndex = Math.min(pendingDelete.originalIndex, state.data.todos.length);
   state.data.todos.splice(insertIndex, 0, pendingDelete.todo);
+
   clearPendingDelete();
   commitDataChange("삭제한 할 일을 복구했습니다.");
   return true;
 }
 
 function clearUndoTimer() {
-  if (state.ui.undoTimerId !== null) {
-    window.clearTimeout(state.ui.undoTimerId);
-    state.ui.undoTimerId = null;
+  if (state.ui.undoTimerId === null) {
+    return;
   }
+
+  window.clearTimeout(state.ui.undoTimerId);
+  state.ui.undoTimerId = null;
 }
 
 function clearPendingDelete() {
@@ -313,17 +428,18 @@ function getRemainingTodoCount() {
 
 function setFilter(filter) {
   if (!VALID_FILTERS.has(filter)) {
-    return;
+    return false;
   }
 
   state.ui.filter = filter;
   state.ui.editingTodoId = null;
   render();
+  return true;
 }
 
 function startEditingTodo(todoId) {
   if (!findTodoById(todoId)) {
-    return;
+    return false;
   }
 
   state.ui.editingTodoId = todoId;
@@ -332,6 +448,7 @@ function startEditingTodo(todoId) {
   const editInput = todoList.querySelector(`[data-edit-input="${todoId}"]`);
   editInput?.focus();
   editInput?.select();
+  return true;
 }
 
 function cancelEditingTodo() {
@@ -371,10 +488,7 @@ function createTodoElement(todo) {
   const todoItem = document.createElement("li");
   todoItem.className = "todo-item";
   todoItem.dataset.todoId = todo.id;
-
-  if (todo.completed) {
-    todoItem.classList.add("done");
-  }
+  todoItem.classList.toggle("done", todo.completed);
 
   const content = document.createElement("div");
   content.className = "todo-content";
@@ -399,6 +513,7 @@ function createTodoElement(todo) {
   } else {
     const title = document.createElement("span");
     title.className = "todo-title";
+    // 사용자 입력은 HTML로 해석되지 않도록 항상 textContent로 출력한다.
     title.textContent = todo.title;
     content.append(title);
 
@@ -431,14 +546,7 @@ function createActionButton(action, todoId, label, className) {
 function createEmptyStateElement() {
   const emptyItem = document.createElement("li");
   emptyItem.className = "empty-state";
-
-  const emptyMessages = {
-    all: "아직 등록된 할 일이 없습니다.",
-    active: "남아 있는 할 일이 없습니다.",
-    completed: "완료한 할 일이 없습니다.",
-  };
-
-  emptyItem.textContent = emptyMessages[state.ui.filter];
+  emptyItem.textContent = EMPTY_STATE_MESSAGES[state.ui.filter];
   return emptyItem;
 }
 
@@ -460,40 +568,42 @@ function showUndoToast(title) {
 
 function announce(message) {
   statusMessage.textContent = "";
-
   window.requestAnimationFrame(() => {
     statusMessage.textContent = message;
   });
 }
 
 // ============================================================
-// 8. 이벤트 처리 함수
+// 8. 입력 검증과 이벤트 처리
 // ============================================================
+
+function readValidatedTitle(input, emptyMessage) {
+  const title = normalizeTitle(input.value);
+  let errorMessage = "";
+
+  if (title.length === 0) {
+    errorMessage = emptyMessage;
+  } else if (title.length > MAX_TITLE_LENGTH) {
+    errorMessage = `할 일은 ${MAX_TITLE_LENGTH}자 이하로 입력하세요.`;
+  }
+
+  if (errorMessage) {
+    input.setAttribute("aria-invalid", "true");
+    announce(errorMessage);
+    input.focus();
+    return null;
+  }
+
+  input.removeAttribute("aria-invalid");
+  return title;
+}
 
 function handleTodoSubmit(event) {
   event.preventDefault();
 
-  const todoTitle = normalizeTitle(todoInput.value);
+  const todoTitle = readValidatedTitle(todoInput, "할 일을 입력하세요.");
 
-  if (todoTitle.length === 0) {
-    todoInput.setAttribute("aria-invalid", "true");
-    announce("할 일을 입력하세요.");
-    todoInput.focus();
-    return;
-  }
-
-  if (todoTitle.length > MAX_TITLE_LENGTH) {
-    todoInput.setAttribute("aria-invalid", "true");
-    announce(`할 일은 ${MAX_TITLE_LENGTH}자 이하로 입력하세요.`);
-    todoInput.focus();
-    return;
-  }
-
-  todoInput.removeAttribute("aria-invalid");
-  const createdTodo = createTodo(todoTitle);
-
-  if (!createdTodo) {
-    announce("할 일을 추가하지 못했습니다.");
+  if (todoTitle === null || !createTodo(todoTitle)) {
     return;
   }
 
@@ -501,8 +611,12 @@ function handleTodoSubmit(event) {
   todoInput.focus();
 }
 
+/**
+ * 목록 전체에 리스너 하나만 두는 이벤트 위임 방식이다.
+ * 렌더링으로 버튼이 교체되어도 리스너를 다시 등록할 필요가 없다.
+ */
 function handleTodoListClick(event) {
-  const button = event.target.closest("button[data-action]");
+  const button = event.target.closest?.("button[data-action]");
 
   if (!button || !todoList.contains(button)) {
     return;
@@ -532,7 +646,7 @@ function handleTodoListClick(event) {
 }
 
 function handleTodoListKeydown(event) {
-  const editInput = event.target.closest("[data-edit-input]");
+  const editInput = event.target.closest?.("[data-edit-input]");
 
   if (!editInput) {
     return;
@@ -541,9 +655,7 @@ function handleTodoListKeydown(event) {
   if (event.key === "Enter") {
     event.preventDefault();
     saveTodoEdit(editInput.dataset.editInput);
-  }
-
-  if (event.key === "Escape") {
+  } else if (event.key === "Escape") {
     event.preventDefault();
     cancelEditingTodo();
   }
@@ -556,25 +668,18 @@ function saveTodoEdit(todoId) {
     return;
   }
 
-  const nextTitle = normalizeTitle(editInput.value);
+  const nextTitle = readValidatedTitle(editInput, "수정할 내용을 입력하세요.");
 
-  if (nextTitle.length === 0) {
-    editInput.setAttribute("aria-invalid", "true");
-    announce("수정할 내용을 입력하세요.");
-    editInput.focus();
-    return;
-  }
-
-  if (!updateTodoTitle(todoId, nextTitle)) {
+  if (nextTitle !== null && !updateTodoTitle(todoId, nextTitle)) {
     editInput.setAttribute("aria-invalid", "true");
     announce("할 일을 수정하지 못했습니다.");
   }
 }
 
 function handleFilterClick(event) {
-  const button = event.target.closest("button[data-filter]");
+  const button = event.target.closest?.("button[data-filter]");
 
-  if (!button) {
+  if (!button || !filterGroup.contains(button)) {
     return;
   }
 
@@ -591,7 +696,7 @@ function initializeApp() {
   todoForm.addEventListener("submit", handleTodoSubmit);
   todoList.addEventListener("click", handleTodoListClick);
   todoList.addEventListener("keydown", handleTodoListKeydown);
-  document.querySelector(".todo-filters").addEventListener("click", handleFilterClick);
+  filterGroup.addEventListener("click", handleFilterClick);
   undoButton.addEventListener("click", restoreDeletedTodo);
 
   render();

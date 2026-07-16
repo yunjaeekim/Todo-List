@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="할 일을 추가하고 완료 상태를 관리하는 간단한 TodoList 앱">
   <title>TodoList</title>
 
-  <link rel="stylesheet" href="style_v2.css">
-  <script src="app_v2.js" defer></script>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
 </head>
 <body>
   <main class="container">
@@ -31,7 +32,7 @@
     <section class="todo-toolbar" aria-label="할 일 목록 도구">
       <p id="remainingCount" class="remaining-count">남은 할 일 0개</p>
 
-      <div class="todo-filters" role="group" aria-label="할 일 필터">
+      <div id="todoFilters" class="todo-filters" role="group" aria-label="할 일 필터">
         <button type="button" data-filter="all" aria-pressed="true">전체</button>
         <button type="button" data-filter="active" aria-pressed="false">진행 중</button>
         <button type="button" data-filter="completed" aria-pressed="false">완료</button>

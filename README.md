@@ -33,6 +33,27 @@ python -m http.server 8000
 
 브라우저에서 `http://localhost:8000`으로 접속합니다.
 
+
+## GitHub Pages 배포
+
+이 저장소는 `.github/workflows/deploy-pages.yml`을 통해 정적 파일을 GitHub Pages에 배포합니다. 빌드 과정 없이 `index.html`, `style.css`, `app.js`, `.nojekyll`만 배포 아티팩트에 포함합니다.
+
+원격 저장소를 연결하고 현재 브랜치를 push한 뒤 Pull Request를 `main`에 병합합니다.
+
+```bash
+git remote add origin <GITHUB_REPOSITORY_URL>
+git push -u origin chore/github-pages-code-review
+```
+
+GitHub 저장소에서 한 번만 다음 설정을 확인합니다.
+
+1. **Settings** → **Pages**
+2. **Build and deployment**의 Source를 **GitHub Actions**로 선택
+3. `main` 브랜치에 push 또는 merge
+4. Actions의 `Deploy static site to GitHub Pages` 실행 결과 확인
+
+정적 자산은 상대 경로를 사용하므로 사용자 사이트와 프로젝트 사이트 모두에서 동작합니다.
+
 ## 파일 구조
 
 ```text
@@ -74,7 +95,7 @@ DOM은 Todo 데이터의 원본이 아닙니다. 모든 화면은 `state` 객체
 
 ### localStorage 저장 형식
 
-저장 키는 `todoListApp`입니다.
+저장 키는 다른 GitHub Pages 프로젝트와 충돌하지 않도록 `todo-list-app:state`를 사용합니다. 기존 `todoListApp` 데이터는 최초 실행 시 자동 이전됩니다.
 
 ```javascript
 {
@@ -124,10 +145,10 @@ restoreDeletedTodo();
 
 ## Git 작업 브랜치
 
-현재 기능 개발 브랜치 이름은 다음과 같습니다.
+현재 리뷰 및 배포 준비 브랜치 이름은 다음과 같습니다.
 
 ```text
-feat/todo-state-persistence
+chore/github-pages-code-review
 ```
 
 원격 GitHub 저장소가 아직 연결되지 않았다면 다음 명령으로 등록합니다.
