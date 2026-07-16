@@ -1,0 +1,21 @@
+/* 전체 기본 글꼴/여백 */
+body {
+  font-family: system-ui, sans-serif;
+  margin: 24px;
+}
+
+/* 입력창/버튼 크기만 살짝 */
+input {
+  padding: 8px;
+}
+
+button {
+  padding: 8px 12px;
+  margin-left: 6px;
+  cursor: pointer;
+}
+
+/* 목록 간격 */
+li {
+  margin-top: 8px;
+}
